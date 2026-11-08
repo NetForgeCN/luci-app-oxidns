@@ -4,127 +4,116 @@
 
 `luci-app-oxidns` 是 OxiDNS 的 OpenWrt / LuCI 管理插件。安装后，LuCI 会出现 `Services -> OxiDNS` 页面，用来安装 OxiDNS 内核二进制、管理 OpenWrt 服务、编辑配置和查看日志。
 
-在原版功能之上，本版本额外提供：
+本仓库在 [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) 的基础上重新实现，并补齐了三块原版缺失的能力。遵循 GPL-3.0-or-later 开源。
 
-- **内核持久化存储与开机自愈**：内核二进制和 WebUI 默认保存在 `/etc/oxidns/core`（持久分区），`/usr/bin/oxidns` 与 `/usr/share/oxidns/webui` 以符号链接指向它。安装插件时会把 `/etc/oxidns` 写入 `/etc/sysupgrade.conf`，因此**升级固件后内核和配置不会丢失**；重新安装本插件或启动服务时会自动重建符号链接，无需重新下载内核、无需重新粘贴配置。
-- **LuCI 内核更新**：`Core` 页面提供 `Check Update` 按钮，对比当前版本与 GitHub 最新 release，确认后可一键下载（含 SHA256 校验）、替换并重启服务。
-- **日志字段过滤**：`Logs` 页面支持关键词过滤，以及按 `plugin`（如 log_cache / log_blocked / log_abroad）、`qtype`、`rcode` 字段筛选，并显示筛选后行数。
+## 与原版的区别
 
-## 你需要安装什么
+| 能力 | 原版 | 本仓库 |
+|---|---|---|
+| 内核二进制存放 | `/usr/bin/oxidns`，固件升级即丢 | `/etc/oxidns/core/oxidns`（持久区），运行路径为符号链接 |
+| 配置文件 | 升级固件后默认丢失 | 写入 `/etc/sysupgrade.conf`，勾选"保留配置"升级不丢 |
+| 升级固件后恢复 | 重新下载内核 + 重新粘贴配置 | 自动重建符号链接，重装一次插件包即恢复 |
+| 内核升级 | LuCI 无入口，需去内核自带 WebUI/API | `Core` 页 `Check Update` 一键检查并升级 |
+| 日志 | 只能整页翻看 | 支持关键词 + `plugin` / `qtype` / `rcode` 字段过滤 |
+| 低闪存设备 | — | `Settings` 可关闭持久化，退回原版行为 |
 
-- `luci-app-oxidns`：LuCI 管理页面、rpcd 后端和 OpenWrt init 服务脚本。
-- `luci-i18n-oxidns-zh-cn`：可选简体中文语言包。
+## 从源码构建
 
-## 安装 LuCI 插件
-
-推荐在 OpenWrt 上以 root 用户执行官方安装脚本：
-
-```sh
-curl -fsSL https://oxidns.org/install.sh | sh
-```
-
-如果系统没有 `curl`，也可以使用 `wget`：
+### 方式一：OpenWrt buildroot / SDK 编译（推荐，可集成进固件）
 
 ```sh
-wget -O- https://oxidns.org/install.sh | sh
+# 1. 准备 OpenWrt 构建环境（版本需与目标固件匹配）
+git clone https://github.com/openwrt/openwrt.git
+cd openwrt
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+# 2. 把本仓库克隆为 package
+git clone https://github.com/NetForgeCN/luci-app-oxidns.git package/luci-app-oxidns
+
+# 3. menuconfig 中选中（LuCI -> Applications -> luci-app-oxidns）
+make menuconfig
+
+# 4. 编译
+make package/luci-app-oxidns/compile V=s
 ```
 
-脚本会检测 OpenWrt 包管理器，从 `luci-app-oxidns` Releases 读取最新包，按系统选择 `.ipk` 或 `.apk`，安装 `luci-app-oxidns` 和可选简体中文语言包，并自动重启 `rpcd`。更多脚本选项见 <https://oxidns.org/openwrt>。
+编译产物在 `bin/packages/<架构>/` 下：`luci-app-oxidns_*.ipk` 和 `luci-i18n-oxidns-zh-cn_*.ipk`。在 menuconfig 里直接勾选 `<*>` 也可以把插件**编进固件镜像**，这样升级固件后插件本身也不需要重装。
 
-也可以从本仓库 Release 下载对应的 LuCI 包后手动安装：
+### 方式二：无 SDK 快速打包（只出安装包）
+
+适合不想拉整套 OpenWrt 源码、只想快速拿到 ipk/apk 的场景，需要 `node`、`tar`、`gzip`、`sha256sum`：
 
 ```sh
-opkg install ./luci-app-oxidns_0.1.0-r1_all.ipk
-opkg install ./luci-i18n-oxidns-zh-cn_0.1.0-r1_all.ipk
+git clone https://github.com/NetForgeCN/luci-app-oxidns.git
+cd luci-app-oxidns
+./scripts/build-luci-package.sh 0.2.0 dist
 ```
 
-在使用 `apk` 的 OpenWrt 系统上：
+产物在 `dist/`：
+
+```
+luci-app-oxidns_0.2.0-r1_all.ipk          # 主包
+luci-app-oxidns_0.2.0-r1_all.apk
+luci-i18n-oxidns-zh-cn_0.2.0-r1_all.ipk   # 简体中文语言包
+luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
+sha256sums.txt
+```
+
+### 路由器上安装
 
 ```sh
-apk add --allow-untrusted --no-network ./luci-app-oxidns_0.1.0-r1_all.apk
-apk add --allow-untrusted --no-network ./luci-i18n-oxidns-zh-cn_0.1.0-r1_all.apk
+# ipk（旧版 opkg 系统）
+opkg install luci-app-oxidns_0.2.0-r1_all.ipk
+opkg install luci-i18n-oxidns-zh-cn_0.2.0-r1_all.ipk
+
+# apk（新版 OpenWrt）
+apk add --allow-untrusted ./luci-app-oxidns_0.2.0-r1_all.apk
+apk add --allow-untrusted ./luci-i18n-oxidns-zh-cn_0.2.0-r1_all.apk
 ```
 
-如果安装后菜单没有出现，重启 `rpcd`：
+安装完成后浏览器打开 LuCI 的 `Services -> OxiDNS`：
 
-```sh
-/etc/init.d/rpcd restart
-```
+1. `Core` 页 → `Install Core`（自动按 CPU 架构下载并校验 SHA256；离线环境用 `Upload Core`）；
+2. `Configuration` 页粘贴 / 编辑 `config.yaml` → `Save & Restart`；
+3. `Overview` 页 → `Start` + `Start on boot`。
 
-然后打开 LuCI：`Services -> OxiDNS`。
+## 编译产物安装后的行为
 
-## 安装 OxiDNS 内核
+这个版本解决的核心问题是：**原版固件升级后内核和配置全丢，DNS 服务失效导致断网**。本仓库的实现：
 
-如果你是从旧的 OpenWrt `oxidns` 包模式迁移，先停止服务并移除旧内核包，避免它继续拥有 `/usr/bin/oxidns` 或 `/etc/init.d/oxidns`：
+- **核心持久保存**：内核二进制和 WebUI 安装到持久分区 `/etc/oxidns/core/`，`/usr/bin/oxidns` 与 `/usr/share/oxidns/webui` 是指向它的符号链接。固件升级（勾选保留配置）后内核原样保留。
+- **配置持久保存**：安装时自动把 `/etc/oxidns`、`/etc/config/oxidns` 追加进 `/etc/sysupgrade.conf`，`config.yaml` 和 UCI 设置升级后不丢。
+- **开机自愈**：init 脚本、rpcd 状态查询、插件 postinst 三个时机检测符号链接，丢失即自动从持久区重建。固件升级后只需重装一次插件包（`opkg install` 一下），服务即恢复，无需重新下载内核、无需重新粘贴配置。
+- **LuCI 内核更新**：`Core` 页 `Check Update` 对比当前版本与 GitHub 最新 release，确认后自动下载（含 SHA256 校验）、替换、重启服务。
+- **日志字段过滤**：`Logs` 页支持关键词过滤和 `plugin`（log_cache / log_blocked / log_abroad 等）、`qtype`、`rcode` 下拉筛选，实时显示筛选后行数。
 
-```sh
-/etc/init.d/oxidns stop
-opkg remove oxidns
-```
+## 固件升级操作步骤
 
-如果系统使用 `apk`，对应执行：
+1. LuCI → System → Backup / Flash Firmware，**勾选"保留配置"**；
+2. 刷入新固件；
+3. 升级完成后重新安装一次本插件的 ipk/apk（插件自身文件会被 sysupgrade 清除，这是 OpenWrt 机制）；
+4. 完成。postinst 会自动重建内核符号链接，OxiDNS 服务照常运行，配置原样保留。
 
-```sh
-/etc/init.d/oxidns stop
-apk del oxidns
-```
-
-1. 打开 `Services -> OxiDNS -> Settings`，确认 `Core repository` 为 `svenshi/oxidns`，`Core bundle` 为 `full`。
-2. 打开 `Services -> OxiDNS -> Core`，点击 `Install Core`；离线环境也可以点击 `Upload Core` 上传官方 `.tar.gz` archive 或单个 `oxidns` 二进制。
-3. 安装成功后，到 `Overview` 启动并启用服务。
-
-LuCI 会按当前设备 CPU 架构选择 OxiDNS Linux musl release archive，例如 `oxidns-x86_64-unknown-linux-musl.tar.gz`。安装时会校验 GitHub release asset 的 SHA256 digest。
-
-如果内核已经安装，`Core` 页面提供 `Repair Reinstall` 和 `Upload Core`，用于重新下载当前已安装版本或用上传文件修复二进制 / WebUI 文件；它不会安装 latest，也不会作为升级入口。
-
-## 常用页面
-
-- `Overview`：查看内核状态、服务状态、WebUI 入口、配置路径和日志状态。
-- `Core`：首次安装、上传安装、检查更新、一键升级、修复重装或删除 OxiDNS 内核二进制。
-- `Configuration`：查看、保存和校验配置文件。
-- `Logs`：查看运行日志，支持刷新、暂停，以及关键词和 plugin / qtype / rcode 字段过滤。
-- `Settings`：设置 core repository、bundle、代理、配置路径、工作目录和内核持久化开关。
+不勾选"保留配置"则所有数据都会被清除，这是 OpenWrt 机制本身的行为。
 
 ## 默认路径
 
-- 二进制（运行时）：`/usr/bin/oxidns`（指向持久化副本的符号链接）
+- 二进制（运行时）：`/usr/bin/oxidns`（符号链接）
 - 二进制（持久化）：`/etc/oxidns/core/oxidns`
 - WebUI（运行时）：`/usr/share/oxidns/webui`（符号链接）
 - WebUI（持久化）：`/etc/oxidns/core/webui`
 - 配置：`/etc/oxidns/config.yaml`
-- 工作目录：`/var/lib/oxidns`
+- 工作目录：`/var/lib/oxidns`（tmpfs，重启清空，仅运行时数据）
 - 服务脚本：`/etc/init.d/oxidns`
-
-## 升级与删除
-
-升级 OxiDNS 内核有两种方式：
-
-- 在 LuCI 的 `Core` 页面点击 `Check Update`，如有新版本点击 `Update to vX.Y.Z`，LuCI 会下载最新 release、校验 SHA256、替换内核并重启服务。
-- 继续使用 OxiDNS 自带的升级能力（内核 WebUI / API / CLI）。
-
-升级 LuCI 插件时，下载新版本 `luci-app-oxidns` 包并重新安装即可。LuCI 页面内不提供插件自升级。
-
-删除 OxiDNS 内核可以在 LuCI 的 `Core` 页面点击 `Remove Core`。该操作会停止并禁用服务，删除 `/usr/bin/oxidns`、`/usr/share/oxidns/webui` 和持久化目录 `/etc/oxidns/core`，但保留 `/etc/oxidns/config.yaml` 和 `/var/lib/oxidns`。
-
-## 固件升级（sysupgrade）行为
-
-安装本插件后，`/etc/oxidns` 与 `/etc/config/oxidns` 会被追加到 `/etc/sysupgrade.conf`。在 LuCI 升级页面勾选“保留配置”执行固件升级时：
-
-- 配置文件 `/etc/oxidns/config.yaml`、UCI 设置和持久化的内核二进制 / WebUI 都会保留。
-- 固件自身会清掉插件文件（LuCI 页面、init 脚本等），升级完成后**重新安装一次本插件的 ipk/apk**，postinst 会自动重建 `/usr/bin/oxidns` 符号链接，服务恢复运行，无需重新下载内核或重新粘贴配置。
-- 如果不勾选“保留配置”，所有数据都会被清除，这是 OpenWrt 机制本身的行为。
-
-低闪存设备（overlay 剩余空间小于内核包体积）可以在 `Settings` 中关闭“Persist core across upgrades”，此时安装行为与原版一致（直接写入 `/usr/bin`，升级后丢失）。
-
-## 私有仓库与下载
-
-路由器需要能直接访问 GitHub Releases 和 release archive。私有仓库或受限网络环境可以在 `Settings` 中配置 GitHub token 或下载代理。Token 和代理值保存后不会在 LuCI 页面中回显，需要清除时请勾选对应清除选项。配置下载代理时需要安装 `curl`，否则 LuCI 会返回明确错误；也可以在 `Core` 页面手动上传 release archive 或二进制进行离线安装。
 
 ## 已知限制
 
 - 目前只支持 OxiDNS 已发布的 Linux musl release target。
-- 固件升级后插件自身文件会被清除（OpenWrt sysupgrade 机制），需要重新安装一次本插件；持久化的内核与配置会自动恢复，无需重新下载。
-- `Overview` 的 WebUI 入口根据配置文件中的 HTTP listen 地址生成；如果监听 `127.0.0.1`，LuCI 会保留链接并提示需要本机访问或 SSH 隧道。
-- 日志页读取 OpenWrt `logread` 中的 OxiDNS 服务 stdout/stderr 输出。
-- 可在 `Settings` 中关闭“写入系统日志”（默认开启），保存后需重启 OxiDNS 才会生效。LuCI 会停止服务，等待旧 procd 实例被移除（最多 10 秒），再启动新实例，以应用 stdout/stderr 设置。状态查询失败或停止超时时，重启会中止。替换正在运行的内核前也会执行相同的停止等待。
-- `Overview` 上的服务操作（Start / Stop / Restart / Enable / Disable）始终会向系统日志写入一条以 `luci-app-oxidns` 为 tag 的审计记录，包含动作和成功或失败结果。内核未安装、init 脚本缺失或操作失败时同样会记录。这些记录可在 `logread` 原始输出和 LuCI 系统日志页看到；由于日志页只显示 `oxidns[PID]:` 格式的内核输出，审计记录不会出现在 OxiDNS 日志页。
+- 低闪存设备（overlay 剩余空间小于内核包体积）请在 `Settings` 关闭 `Persist core across upgrades`，否则安装可能因空间不足失败。
+- `Overview` 的 WebUI 入口根据配置文件中的 HTTP listen 地址生成；监听 `127.0.0.1` 时 LuCI 会提示需要本机访问或 SSH 隧道。
+- 私有内核仓库或受限网络环境可在 `Settings` 配置 GitHub token 或下载代理（需要 `curl`）。
+
+## 许可
+
+GPL-3.0-or-later。基于 [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidns) 与 [svenshi/oxidns](https://github.com/svenshi/oxidns) 重新实现与扩展，感谢原作者。
