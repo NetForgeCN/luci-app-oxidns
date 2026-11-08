@@ -51,7 +51,6 @@ endif
 PKG_SOURCE:=oxidns-$(OXIDNS_RUST_TARGET).tar.gz
 PKG_HASH:=$(OXIDNS_PKG_HASH)
 
-PKG_MAINTAINER:=NetForgeCN
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
@@ -70,6 +69,15 @@ define Package/oxidns-core/description
   area /etc/oxidns/core so they survive firmware upgrades, and links them
   into /usr/bin and /usr/share/oxidns. Upgrades can later be applied from
   the luci-app-oxidns "Check Update" page.
+endef
+
+# The OxiDNS release tarball has multiple top-level entries (oxidns,
+# config.yaml, LICENSE, webui/) instead of a single root directory, so the
+# default PKG_UNPACK (which strips the first path component) would destroy
+# it. Extract without stripping instead.
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	tar -C $(PKG_BUILD_DIR) -xzf $(DL_DIR)/$(PKG_SOURCE)
 endef
 
 define Build/Compile
