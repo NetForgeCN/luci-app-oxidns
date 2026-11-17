@@ -62,6 +62,7 @@ jobs:
           ./scripts/build-rules-baseline.sh "$VERSION"
 
       - name: Publish release when the rule content changed
+        id: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -96,7 +97,6 @@ jobs:
             echo
             echo "| file | lines | sha256 |"
             echo "| --- | --- | --- |"
-            awk '{ printf "| %s | %s | %s |\n", $2, $1, "—" }' /dev/null
             while read -r sha name; do
               lines="$(wc -l < "dist/oxidns-rules-baseline/$name" | tr -d ' ')"
               printf '| %s | %s | %s |\n' "$name" "$lines" "${sha:0:12}…"
