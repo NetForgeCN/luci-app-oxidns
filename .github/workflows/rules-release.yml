@@ -1,13 +1,16 @@
 name: rules-baseline
 
 # Rebuilds the bundled OxiDNS rule baseline from the four upstream projects and
-# publishes it as a release asset (tag rules-vYYYY.MM.DD) of this repository.
+# publishes it as a release asset (tag rules-vYYYY.MM.DD[.HHMM]) of this
+# repository.
 #
 # The device side (LuCI "Rules" page) only ever talks to this repository's
 # releases, so jsDelivr/GitHub availability of the upstream projects no longer
 # affects routers. Releases are only published when the rule data actually
 # changed (CONTENT-SHA256 differs from the previous release), so devices are not
-# woken up for a byte-identical rebuild.
+# woken up for a byte-identical rebuild. Versions carry a UTC timestamp because
+# a published version is immutable: the package Makefile pins its SHA256, so an
+# asset must never be replaced in place.
 #
 # After a new release, bump PKG_VERSION/PKG_HASH in
 # oxidns-rules-baseline/Makefile (the job summary prints both values).
@@ -18,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (YYYY.MM.DD). Empty = today (UTC)'
+        description: 'Release version (YYYY.MM.DD.HHMM). Empty = now (UTC)'
         required: false
         type: string
       force:
@@ -47,10 +50,11 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           version="${INPUT_VERSION:-}"
-          [ -n "$version" ] || version="$(date -u +%Y.%m.%d)"
+          [ -n "$version" ] || version="$(date -u +%Y.%m.%d.%H%M)"
           case "$version" in
+            [0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9][0-9]) ;;
             [0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]) ;;
-            *) echo "invalid version: $version (expected YYYY.MM.DD)" >&2; exit 1 ;;
+            *) echo "invalid version: $version (expected YYYY.MM.DD or YYYY.MM.DD.HHMM)" >&2; exit 1 ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -86,8 +90,8 @@ jobs:
           fi
           tag="rules-v${VERSION}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "replacing existing release $tag"
-            gh release delete "$tag" --yes --cleanup-tag
+            echo "release $tag already exists; a published version is immutable, bump the version instead" >&2
+            exit 1
           fi
           notes="$(mktemp)"
           {

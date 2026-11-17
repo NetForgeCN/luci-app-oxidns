@@ -215,8 +215,8 @@ else
 	(
 		cd "$OUT_DIR"
 		find "$BASE_NAME" -print | LC_ALL=C sort \
-			| tar --format=ustar --uid 0 --gid 0 --uname root --gname root -c -T - \
-			| gzip -n -9 > "$(basename "$ASSET")"
+			| tar --no-recursion --format=ustar --uid 0 --gid 0 --uname root --gname root \
+				-c -T - | gzip -n -9 > "$(basename "$ASSET")"
 	)
 fi
 
