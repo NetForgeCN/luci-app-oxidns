@@ -87,6 +87,17 @@ grep -q '"prewarm_read"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
 grep -q '"prewarm_save"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
 grep -q '"prewarm_run"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
 grep -q 'config prewarm' root/etc/config/oxidns
+# Section IDs must be unique. `config prewarm 'main'` collides with the
+# `settings 'main'` section, so `uci get oxidns.main.api_pass` returns the
+# prewarm section and ${OXIDNS_API_PASS} expansion fails in the UI check.
+grep -q "^config prewarm 'prewarm'" root/etc/config/oxidns
+if grep -q "^config prewarm 'main'" root/etc/config/oxidns; then
+	echo "prewarm section ID must not be 'main' (collides with settings main)" >&2
+	exit 1
+fi
+# Both entry points must self-heal persisted configs from the bad release.
+grep -q 'heal_prewarm_section_id' root/etc/init.d/oxidns
+grep -q 'heal_prewarm_section_id' root/usr/libexec/rpcd/luci.oxidns
 test -s root/usr/share/oxidns/prewarm.default.txt
 test -x root/usr/libexec/oxidns-prewarm
 sh -n root/usr/libexec/oxidns-prewarm

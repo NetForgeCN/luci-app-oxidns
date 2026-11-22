@@ -21,8 +21,22 @@ PREWARM_DEFAULT_FILE="${PREWARM_DEFAULT_FILE:-/usr/share/oxidns/prewarm.default.
 # archive; there are no hand-maintained local policy lists.
 RULE_FILES="adguard-antiad.txt adguard-hostlist.txt anti-ad-domains.txt adrules-domains.txt neodevhost-domains.txt accelerated-domains.china.conf cn-domains.txt"
 
+# One-time self-heal for the shipped bad config (fde42f8): the prewarm section
+# was written as `config prewarm 'main'`, colliding with `config settings
+# 'main'` and making `config_get API_PASS main api_pass` return empty. Rewrite
+# only the section header so both sections survive; never use uci commit here
+# (on a colliding file UCI drops the shadowed options). Idempotent.
+heal_prewarm_section_id() {
+	local cfg="${UCI_CONFIG_FILE:-/etc/config/oxidns}"
+	[ -r "$cfg" ] || return 0
+	grep -q "^config prewarm 'main'" "$cfg" 2>/dev/null || return 0
+	sed -i "s/^config prewarm 'main'/config prewarm 'prewarm'/" "$cfg" 2>/dev/null || true
+	return 0
+}
+
 load_oxidns_settings() {
 	API_PASS=""
+	heal_prewarm_section_id
 	config_load oxidns
 	config_get CONFIG_PATH main config_path "$DEFAULT_CONFIG_PATH"
 	config_get WORKING_DIR main working_dir "$DEFAULT_WORKING_DIR"

@@ -4,6 +4,7 @@ set -eu
 
 UCI_PACKAGE="oxidns"
 UCI_SECTION="main"
+UCI_CONFIG_FILE="${UCI_CONFIG_FILE:-/etc/config/oxidns}"
 OXIDNS_BIN="${OXIDNS_BIN:-/usr/bin/oxidns}"
 WEBUI_DIR="/usr/share/oxidns/webui"
 PERSIST_DIR="/etc/oxidns/core"
@@ -296,7 +297,24 @@ uci_get() {
 	fi
 }
 
+# One-time self-heal for the shipped bad config: fde42f8 wrote the prewarm
+# section as `config prewarm 'main'`, colliding with `config settings 'main'`.
+# UCI keeps one section per ID, so `uci get oxidns.main.api_pass` returned the
+# prewarm section (no api_pass) and ${OXIDNS_API_PASS} expansion failed with
+# "undefined environment variable". Rewrite just the section header in place
+# so both sections survive. Do NOT use `uci rename` + commit here: on a file
+# with this collision UCI's parser drops the shadowed settings options, and a
+# commit would erase api_pass. Idempotent (no-op once corrected).
+heal_prewarm_section_id() {
+	[ -r "$UCI_CONFIG_FILE" ] || return 0
+	grep -q "^config prewarm 'main'" "$UCI_CONFIG_FILE" 2>/dev/null || return 0
+	sed -i "s/^config prewarm 'main'/config prewarm 'prewarm'/" \
+		"$UCI_CONFIG_FILE" 2>/dev/null || true
+	return 0
+}
+
 load_settings() {
+	heal_prewarm_section_id
 	SERVICE_NAME="$DEFAULT_SERVICE_NAME"
 	CONFIG_PATH="$(uci_get config_path "$DEFAULT_CONFIG_PATH")"
 	WORKING_DIR="$(uci_get working_dir "$DEFAULT_WORKING_DIR")"
