@@ -98,6 +98,15 @@ fi
 # Both entry points must self-heal persisted configs from the bad release.
 grep -q 'heal_prewarm_section_id' root/etc/init.d/oxidns
 grep -q 'heal_prewarm_section_id' root/usr/libexec/rpcd/luci.oxidns
+# Regression guard: prewarm_save ends in `uci commit oxidns`, which erases
+# api_pass on a colliding config. `load_prewarm_settings` is on BOTH the read
+# and save paths, so the heal call must live in that function body -- merely
+# defining the helper elsewhere is not enough.
+if ! awk '/^load_prewarm_settings\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+	root/usr/libexec/rpcd/luci.oxidns | grep -q 'heal_prewarm_section_id'; then
+	echo "load_prewarm_settings() must call heal_prewarm_section_id (save path)" >&2
+	exit 1
+fi
 test -s root/usr/share/oxidns/prewarm.default.txt
 test -x root/usr/libexec/oxidns-prewarm
 sh -n root/usr/libexec/oxidns-prewarm

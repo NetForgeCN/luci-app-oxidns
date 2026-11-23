@@ -2758,6 +2758,14 @@ emit_rules_restore_locked() {
 
 
 load_prewarm_settings() {
+	# Heal the legacy colliding section ID before any UCI access. This function
+	# is reached by both prewarm_read (page load) and prewarm_save (page save).
+	# prewarm_save ends with `uci commit oxidns`, which rewrites the whole file;
+	# on a colliding config libuci keeps only one 'main' section and silently
+	# drops api_pass / config_path / working_dir. Self-healing here makes the
+	# save path safe even when it is the very first action after upgrading from
+	# fde42f8 (no status call, no service restart to trigger the other heals).
+	heal_prewarm_section_id
 	PREWARM_ENABLED=1
 	PREWARM_PROTOCOL=udp
 	PREWARM_SERVER=127.0.0.1
