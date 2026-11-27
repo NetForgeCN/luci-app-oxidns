@@ -19,7 +19,7 @@
 | DNS 劫持 | `DNS Hijack` 页一键把 LAN 53 端口重定向到本机 OxiDNS，IPv4/IPv6 全覆盖 | 局域网设备无需改 DNS 即可走 OxiDNS，能看到真实客户端 IP |
 | CodeMirror 编辑器 | 配置页用 YAML 语法高亮编辑器，带行号、内部滚动 | 编辑长配置不跳屏，改配置更直观 |
 | Geo 数据管理 | `Geo Data` 页在线下载/更新 geoip.dat 与 geosite.dat，地址可改可还原 | 数据更新不用重新编译固件，默认走自建规则源 |
-| API 密码托管 | 密码存 UCI，脚本自动注入 `${OXIDNS_API_PASS}` | 配置里不放明文，服务与网页校验都能正常工作 |
+| API 凭据托管 | 用户名与密码存 `0600` 凭据文件，脚本注入 `${OXIDNS_API_USER}` / `${OXIDNS_API_PASS}` | UCI 与 YAML 都不放明文，旧密码一键迁移 |
 | 升级自愈 | 内核、WebUI、配置和规则在 sysupgrade 后自动恢复 | 保留配置升级固件后，重装一次插件即可恢复服务 |
 
 ## 页面一览
@@ -30,8 +30,8 @@
 | `Core` | 安装、上传、升级、修复或移除内核 |
 | `DNS Hijack` | LAN 53 端口重定向开关、目标端口来源、防火墙段状态 |
 | `Configuration` | CodeMirror 高亮编辑、校验、保存 `config.yaml` |
-| `Logs` | 过滤和刷新 OxiDNS 日志 |
-| `Settings` | 仓库、bundle、代理、路径、日志与 API 密码 |
+| `Logs` | 过滤和刷新日志，探测全部上游的应答 / TTL / 耗时 |
+| `Settings` | 仓库、bundle、代理、路径、日志与 API 凭据管理 |
 | `Rules` | 规则基线状态、检查更新、一键更新 |
 | `Geo Data` | geoip.dat / geosite.dat 状态、下载地址、目录、在线更新 |
 | `Prewarm` | 预热开关、域名清单、目标地址与周期、手动执行 |
@@ -41,17 +41,13 @@
 ## 快速开始
 
 1. 按下面的“构建与安装”把插件装进固件或路由器。
-2. 设置 API 密码，密码只保存在 UCI：
-
-   ```sh
-   uci set oxidns.main.api_pass="$(openssl rand -base64 24)"
-   uci commit oxidns
-   /etc/init.d/rpcd restart
-   ```
-
-3. 打开 `Services -> OxiDNS -> Configuration`，按需编辑 `config.yaml`，点 `Save & Restart`。
-4. 打开 `Overview`，启动服务并启用开机自启。
+2. 打开 `Services -> OxiDNS -> Settings -> API credentials`，点 `Generate credentials`，立即复制并保存。凭据写入 `/etc/oxidns/api-auth.env`（权限 `0600`），不会写入 UCI。旧版 UCI 密码可用 `Migrate UCI password` 一键迁移并清除。
+3. 打开 `Services -> OxiDNS -> Configuration`，按需编辑 `config.yaml`，点 `Save & Restart`。配置里使用 `${OXIDNS_API_USER}` / `${OXIDNS_API_PASS}` 引用凭据。
+4. 打开 `Overview`，启动服务并启用开机自启；页面上的 `Diagnostics` 可直达上游探测和凭据管理。
 5. 打开 `Prewarm`，确认目标地址与 `config.yaml` 中的监听一致，点 `Run now` 立即预热。
+6. 打开 `Logs -> Upstream probe`，从 `config.yaml` 读取全部上游并直接查询，查看应答、TTL、耗时与不可探测原因。
+
+> Basic Auth 用 Base64 传输凭据，不是加密。管理 API 应只监听回环地址；如需远程访问，请启用 TLS 或通过 VPN 暴露。
 
 ## 域名预热（Prewarm）
 

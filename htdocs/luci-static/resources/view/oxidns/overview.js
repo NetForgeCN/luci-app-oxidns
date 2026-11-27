@@ -552,6 +552,24 @@ return view.extend({
 					'style': 'display: flex; flex-wrap: wrap; gap: .5em;'
 				}, serviceActionButtons(statusState))
 			]),
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, _('Diagnostics')),
+				E('div', { 'class': 'cbi-section-descr' },
+					_('Check the DNS path or manage the credentials used by the OxiDNS API.')),
+				E('div', {
+					'class': 'cbi-button-row',
+					'style': 'display: flex; flex-wrap: wrap; gap: .5em;'
+				}, [
+					E('a', {
+						'class': 'btn cbi-button cbi-button-action',
+						'href': L.url('admin/services/oxidns/logs') + '#upstream-probe'
+					}, _('Probe upstreams')),
+					E('a', {
+						'class': 'btn cbi-button',
+						'href': L.url('admin/services/oxidns/settings') + '#api-credentials'
+					}, _('Manage API credentials'))
+				])
+			]),
 			E('div', {
 				'id': 'oxidns-overview-error',
 				'class': 'alert-message error',

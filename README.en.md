@@ -19,7 +19,7 @@ Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidn
 | DNS hijack | `DNS Hijack` page redirects LAN port 53 to the local OxiDNS listener, IPv4 and IPv6 | LAN clients use OxiDNS without changing their DNS setting, with real client IPs visible |
 | CodeMirror editor | Configuration page uses a YAML syntax-highlighting editor with line numbers and an internal scroll viewport | Editing long configs no longer jumps the page |
 | Geo data management | `Geo Data` page downloads/updates geoip.dat and geosite.dat; URLs are editable and restorable | Refresh geo data without rebuilding firmware; defaults use the self-maintained rule source |
-| API password handling | Password lives in UCI and is injected into both the service and rpcd | No plaintext password in YAML; config validation and service stay in sync |
+| API credential handling | Username and password live in a 0600 file and are injected as `${OXIDNS_API_USER}` / `${OXIDNS_API_PASS}` | No plaintext in UCI or YAML; one-click migration from legacy UCI |
 | Upgrade self-healing | Core, WebUI, config and rules recover after sysupgrade | Keep settings, reinstall the app once, and the service is back |
 
 ## Pages
@@ -30,8 +30,8 @@ Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidn
 | `Core` | Install, upload, upgrade, repair or remove the core |
 | `DNS Hijack` | LAN port 53 redirect switch, target port source, firewall section status |
 | `Configuration` | CodeMirror highlighting, validate and save `config.yaml` |
-| `Logs` | Filter and refresh OxiDNS logs |
-| `Settings` | Repository, bundle, proxy, paths, logging and API password |
+| `Logs` | Filter and refresh logs, probe every upstream for answers, TTL and latency |
+| `Settings` | Repository, bundle, proxy, paths, logging and API credential management |
 | `Rules` | Baseline status, check for updates, apply updates |
 | `Geo Data` | geoip.dat / geosite.dat status, download URLs, directory, online update |
 | `Prewarm` | Enable switch, domain list, target endpoint, interval and manual run |
@@ -41,17 +41,13 @@ Built on the [svenshi/luci-app-oxidns](https://github.com/svenshi/luci-app-oxidn
 ## Quick start
 
 1. Install the package as described in “Build and install”.
-2. Set the API password; it is stored only in UCI:
-
-   ```sh
-   uci set oxidns.main.api_pass="$(openssl rand -base64 24)"
-   uci commit oxidns
-   /etc/init.d/rpcd restart
-   ```
-
-3. Open `Services -> OxiDNS -> Configuration`, adjust `config.yaml`, then click `Save & Restart`.
-4. Open `Overview`, start the service and enable it at boot.
+2. Open `Services -> OxiDNS -> Settings -> API credentials`, click `Generate credentials`, and copy them immediately. Credentials are written to `/etc/oxidns/api-auth.env` with mode `0600`, never to UCI. Use `Migrate UCI password` to move a legacy UCI password and clear it.
+3. Open `Services -> OxiDNS -> Configuration`, adjust `config.yaml`, then click `Save & Restart`. Reference the credentials with `${OXIDNS_API_USER}` / `${OXIDNS_API_PASS}`.
+4. Open `Overview`, start the service and enable it at boot. `Diagnostics` links to the upstream probe and credential manager.
 5. Open `Prewarm`, make sure the target matches the listener in `config.yaml`, then click `Run now`.
+6. Open `Logs -> Upstream probe` to read every forward upstream from `config.yaml` and query it directly, showing answers, TTL, latency and why an upstream cannot be probed.
+
+> Basic Auth sends credentials as Base64, not encryption. Keep the management API on loopback; use TLS or a VPN before exposing it remotely.
 
 ## DNS prewarming
 

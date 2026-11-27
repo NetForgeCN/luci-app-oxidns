@@ -28,6 +28,44 @@ var callSettingsSave = rpc.declare({
 	expect: {}
 });
 
+var callCredentialsStatus = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'credentials_status',
+	expect: {}
+});
+
+var callCredentialsGenerate = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'credentials_generate',
+	expect: {}
+});
+
+var callCredentialsSet = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'credentials_set',
+	params: ['username', 'password'],
+	expect: {}
+});
+
+var callCredentialsReveal = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'credentials_reveal',
+	expect: {}
+});
+
+var callCredentialsMigrate = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'credentials_migrate',
+	params: ['username'],
+	expect: {}
+});
+
+var callCredentialsClear = rpc.declare({
+	object: 'luci.oxidns',
+	method: 'credentials_clear',
+	expect: {}
+});
+
 var BACKEND_ERRORS = {
 	invalid_core_repository: _('The core repository must use the owner/repository format.'),
 	invalid_core_bundle: _('The core bundle must be full, standard or minimal.'),
@@ -37,6 +75,13 @@ var BACKEND_ERRORS = {
 	invalid_persist_core: _('The persistent storage setting is invalid.'),
 	invalid_allow_core_upload: _('The core upload setting is invalid.'),
 	settings_save_failed: _('Failed to save settings.'),
+	invalid_credentials: _('The username or password does not meet the requirements.'),
+	credentials_write_failed: _('Failed to write the credential file.'),
+	credentials_migrate_failed: _('Credentials were written but the old UCI password remains.'),
+	credentials_missing: _('No credential file is configured.'),
+	credentials_clear_failed: _('Failed to remove the credential file.'),
+	random_failed: _('Could not generate credentials.'),
+	nothing_to_migrate: _('No legacy UCI password was found.'),
 	rpc_unavailable: _('The LuCI backend is unavailable.')
 };
 
@@ -247,16 +292,201 @@ function saveSettings() {
 	});
 }
 
+function credentialNode(id) {
+	return document.getElementById(id);
+}
+
+function applyCredentialStatus(result) {
+	if (!result || result.ok === false)
+		return;
+	var configured = credentialNode('oxidns-cred-configured');
+	if (configured)
+		configured.textContent = result.configured
+			? _('Credentials are configured') : _('No credentials configured');
+	var user = credentialNode('oxidns-cred-user');
+	if (user)
+		user.textContent = result.user_masked || '';
+	var fingerprint = credentialNode('oxidns-cred-fingerprint');
+	if (fingerprint)
+		fingerprint.textContent = result.fingerprint || '';
+	var source = credentialNode('oxidns-cred-source');
+	if (source)
+		source.textContent = result.source === 'file' ? _('Root-only file')
+			: result.source === 'legacy' ? _('Legacy UCI value') : _('Not set');
+	var path = credentialNode('oxidns-cred-path');
+	if (path)
+		path.textContent = result.auth_file || '';
+	var warning = credentialNode('oxidns-cred-warning');
+	if (warning) {
+		var messages = [];
+		if (result.file_present && !result.file_safe)
+			messages.push(_('The credential file has unsafe permissions. It was ignored.'));
+		if (result.legacy_plain)
+			messages.push(_('A plaintext password is still stored in UCI. Migrate it to the credential file.'));
+		if (result.expose_warning)
+			messages.push(_('The API listens outside loopback without TLS. Basic Auth sends credentials as Base64.'));
+		warning.textContent = messages.join(' ');
+		warning.style.display = messages.length ? 'block' : 'none';
+	}
+	var migrate = credentialNode('oxidns-cred-migrate');
+	if (migrate)
+		migrate.disabled = !result.legacy_plain;
+	var clear = credentialNode('oxidns-cred-clear');
+	if (clear)
+		clear.disabled = !result.configured;
+}
+
+function refreshCredentials() {
+	return Promise.resolve(callCredentialsStatus()).then(function(result) {
+		applyCredentialStatus(result);
+		return result;
+	}).catch(function(err) {
+		setCredentialStatus(backendMessage(err, _('Failed to read credentials')), true);
+	});
+}
+
+function setCredentialStatus(message, danger) {
+	var node = credentialNode('oxidns-credentials-status');
+	if (!node)
+		return;
+	node.textContent = message || '';
+	node.className = danger ? 'alert-message error' : 'alert-message info';
+}
+
+function showCredentialModal(title, content) {
+	ui.showModal(title, content);
+	focusModal();
+}
+
+function generateCredentials() {
+	return Promise.resolve(callCredentialsGenerate()).then(function(result) {
+		if (!result || result.ok === false) {
+			setCredentialStatus(backendMessage(result, _('Could not generate credentials.')), true);
+			return;
+		}
+		showCredentialModal(_('Save these credentials now'), [
+			E('p', {}, _('They are shown once. Copy them before closing this dialog.')),
+			row(_('Username'), E('input', {
+				'id': 'oxidns-generated-user',
+				'class': 'cbi-input-text',
+				'value': result.username || ''
+			})),
+			row(_('Password'), E('input', {
+				'id': 'oxidns-generated-password',
+				'class': 'cbi-input-text',
+				'value': result.password || ''
+			})),
+			E('div', { 'class': 'cbi-button-row' }, [
+				E('button', {
+					'type': 'button',
+					'class': 'btn cbi-button cbi-button-positive',
+					'click': function(ev) {
+						ev.preventDefault();
+						return Promise.resolve(callCredentialsSet(
+							field('oxidns-generated-user'),
+							field('oxidns-generated-password')
+						)).then(function(saved) {
+							ui.hideModal();
+							if (!saved || saved.ok === false) {
+								setCredentialStatus(backendMessage(saved, _('Failed to write the credential file.')), true);
+								return;
+							}
+							setCredentialStatus(_('Credentials saved.'), false);
+							applyCredentialStatus(saved);
+						}).catch(function(err) {
+							ui.hideModal();
+							setCredentialStatus(backendMessage(err, _('Failed to write the credential file.')), true);
+						});
+					}
+				}, _('Save credentials')),
+				E('button', {
+					'type': 'button',
+					'click': function(ev) { ev.preventDefault(); ui.hideModal(); }
+				}, _('Cancel'))
+			])
+		]);
+	}).catch(function(err) {
+		setCredentialStatus(backendMessage(err, _('Could not generate credentials.')), true);
+	});
+}
+
+function revealCredentials() {
+	return Promise.resolve(callCredentialsReveal()).then(function(result) {
+		if (!result || result.ok === false) {
+			setCredentialStatus(backendMessage(result, _('Failed to read credentials')), true);
+			return;
+		}
+		showCredentialModal(_('Current credentials'), [
+			row(_('Username'), E('input', {
+				'class': 'cbi-input-text',
+				'readonly': 'readonly',
+				'value': result.username || ''
+			})),
+			row(_('Password'), E('input', {
+				'class': 'cbi-input-text',
+				'readonly': 'readonly',
+				'value': result.password || ''
+			})),
+			E('div', { 'class': 'cbi-button-row' }, [
+				E('button', {
+					'type': 'button',
+					'click': function(ev) { ev.preventDefault(); ui.hideModal(); }
+				}, _('Close'))
+			])
+		]);
+	}).catch(function(err) {
+		setCredentialStatus(backendMessage(err, _('Failed to read credentials')), true);
+	});
+}
+
+function migrateCredentials() {
+	return Promise.resolve(callCredentialsMigrate('admin')).then(function(result) {
+		if (!result || result.ok === false) {
+			setCredentialStatus(backendMessage(result, _('Failed to migrate credentials')), true);
+			return;
+		}
+		setCredentialStatus(_('Migrated to the credential file.'), false);
+		applyCredentialStatus(result);
+	}).catch(function(err) {
+		setCredentialStatus(backendMessage(err, _('Failed to migrate credentials')), true);
+	});
+}
+
+function clearCredentials() {
+	if (!window.confirm(_('Remove the credential file? OxiDNS will fail closed until new credentials are set.')))
+		return;
+	return Promise.resolve(callCredentialsClear()).then(function(result) {
+		if (!result || result.ok === false) {
+			setCredentialStatus(backendMessage(result, _('Failed to remove the credential file.')), true);
+			return;
+		}
+		setCredentialStatus(_('Credential file removed.'), false);
+		applyCredentialStatus(result);
+	}).catch(function(err) {
+		setCredentialStatus(backendMessage(err, _('Failed to remove the credential file.')), true);
+	});
+}
+
 return view.extend({
 	load: function() {
-		return Promise.resolve(callSettingsRead()).catch(function(err) {
-			console.warn('oxidns settings load:', err);
-			return { ok: false, code: 'rpc_unavailable' };
+		return Promise.all([
+			Promise.resolve(callSettingsRead()).catch(function(err) {
+				console.warn('oxidns settings load:', err);
+				return { ok: false, code: 'rpc_unavailable' };
+			}),
+			Promise.resolve(callCredentialsStatus()).catch(function(err) {
+				console.warn('oxidns credentials load:', err);
+				return { ok: false, code: 'rpc_unavailable' };
+			})
+		]).then(function(results) {
+			return { settings: results[0], credentials: results[1] };
 		});
 	},
 
-	render: function(settings) {
-		settings = settings || {};
+	render: function(data) {
+		data = data || {};
+		var settings = data.settings || data;
+		var credentials = data.credentials || {};
 
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('OxiDNS Settings')),
@@ -323,6 +553,65 @@ return view.extend({
 				]),
 				E('div', {
 					'id': 'oxidns-settings-status',
+					'aria-live': 'polite',
+					'style': 'margin-top: 1em;'
+				})
+			]),
+			E('h3', { 'id': 'api-credentials' }, _('API credentials')),
+			E('div', { 'class': 'cbi-map-descr' },
+				_('Basic Auth credentials are kept in a root-only file and injected into OxiDNS at runtime. They are never written to UCI.')),
+			E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'table cbi-section-table' }, [
+					row(_('Status'), E('div', {
+						'id': 'oxidns-cred-configured',
+						'aria-live': 'polite'
+					}, credentials.configured ? _('Credentials are configured') : _('No credentials configured'))),
+					row(_('Storage'), E('div', {}, [
+						E('div', { 'id': 'oxidns-cred-source' },
+							credentials.source === 'file' ? _('Root-only file')
+								: credentials.source === 'legacy' ? _('Legacy UCI value') : _('Not set')),
+						E('div', { 'id': 'oxidns-cred-path', 'class': 'cbi-value-description' }, credentials.auth_file || '')
+					])),
+					row(_('Username'), E('div', {
+						'id': 'oxidns-cred-user',
+						'class': 'cbi-value-description'
+					}, credentials.user_masked || '')),
+					row(_('Fingerprint'), E('div', {
+						'id': 'oxidns-cred-fingerprint',
+						'class': 'cbi-value-description'
+					}, credentials.fingerprint || ''))
+				]),
+				E('div', {
+					'id': 'oxidns-cred-warning',
+					'class': 'alert-message warning',
+					'aria-live': 'polite',
+					'style': 'display: none; margin-top: 1em;'
+				}),
+				E('div', { 'class': 'cbi-button-row' }, [
+					E('button', {
+						'type': 'button',
+						'class': 'btn cbi-button cbi-button-positive',
+						'click': function(ev) { ev.preventDefault(); return generateCredentials(); }
+					}, _('Generate credentials')),
+					E('button', {
+						'type': 'button',
+						'click': function(ev) { ev.preventDefault(); return revealCredentials(); }
+					}, _('View credentials')),
+					E('button', {
+						'id': 'oxidns-cred-migrate',
+						'type': 'button',
+						'disabled': credentials.legacy_plain ? null : 'disabled',
+						'click': function(ev) { ev.preventDefault(); return migrateCredentials(); }
+					}, _('Migrate UCI password')),
+					E('button', {
+						'id': 'oxidns-cred-clear',
+						'type': 'button',
+						'disabled': credentials.configured ? null : 'disabled',
+						'click': function(ev) { ev.preventDefault(); return clearCredentials(); }
+					}, _('Remove credentials'))
+				]),
+				E('div', {
+					'id': 'oxidns-credentials-status',
 					'aria-live': 'polite',
 					'style': 'margin-top: 1em;'
 				})

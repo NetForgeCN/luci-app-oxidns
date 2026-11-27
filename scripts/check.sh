@@ -85,14 +85,32 @@ test -s htdocs/luci-static/resources/oxidns-codemirror/yaml.min.js
 test -s htdocs/luci-static/resources/oxidns-codemirror/codemirror.min.css
 test -s htdocs/luci-static/resources/oxidns-codemirror/cmtheme.css
 
-# [API password] Both callers of `oxidns check/start` must inject OXIDNS_API_PASS:
-# init.d covers the procd service, rpcd covers config validate/save and core
-# install. A gap here makes any ${OXIDNS_API_PASS} config fail only in the UI.
+# [API credentials] UCI only keeps the legacy fallback; the root-only file is
+# the source of truth. Both callers of `oxidns check/start` must export the
+# credentials: init.d for procd, rpcd for config validate/save and core install.
 grep -q "option api_pass" root/etc/config/oxidns
-grep -q 'config_get API_PASS main api_pass' root/etc/init.d/oxidns
+test -s root/usr/libexec/oxidns-auth
+sh -n root/usr/libexec/oxidns-auth
+grep -q 'load_api_credentials' root/etc/init.d/oxidns
+grep -q 'load_api_credentials' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'procd_set_param env OXIDNS_API_USER=' root/etc/init.d/oxidns
 grep -q 'procd_set_param env OXIDNS_API_PASS=' root/etc/init.d/oxidns
-grep -q 'uci_get api_pass' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'export OXIDNS_API_USER' root/usr/libexec/rpcd/luci.oxidns
 grep -q 'export OXIDNS_API_PASS' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'uci -q delete "$UCI_PACKAGE.$UCI_SECTION.api_pass"' root/usr/libexec/rpcd/luci.oxidns
+grep -q 'api-credentials' htdocs/luci-static/resources/view/oxidns/settings.js
+grep -q '"credentials_status"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q '"credentials_set"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+# [Upstream probe] keep parser, RPC, ACL and both UI entry points wired.
+grep -q 'config_upstreams' root/usr/libexec/rpcd/luci.oxidns
+grep -q ',"ttl":' root/usr/libexec/rpcd/luci.oxidns
+grep -q '"upstream_probe"' root/usr/share/rpcd/acl.d/luci-app-oxidns.json
+grep -q 'upstream-probe' htdocs/luci-static/resources/view/oxidns/logs.js
+grep -q 'upstream-probe' htdocs/luci-static/resources/view/oxidns/overview.js
+if grep -q 'credentials_set.*api_pass' root/usr/libexec/rpcd/luci.oxidns; then
+	echo "credentials_set must never write the password back into UCI" >&2
+	exit 1
+fi
 # [prewarm] Keep the LuCI page, ACL endpoint, helper script and default list
 # wired together. A missing piece makes the tab render but every action fail.
 grep -q 'oxidns/prewarm' root/usr/share/luci/menu.d/luci-app-oxidns.json
