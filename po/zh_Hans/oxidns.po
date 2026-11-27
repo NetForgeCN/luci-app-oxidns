@@ -244,6 +244,9 @@ msgstr "详情"
 msgid "Diagnostics"
 msgstr "诊断"
 
+msgid "Data & Updates"
+msgstr "数据与更新"
+
 msgid "DNS Hijack"
 msgstr "DNS 劫持"
 

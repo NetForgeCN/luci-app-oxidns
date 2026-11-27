@@ -242,6 +242,9 @@ msgstr ""
 msgid "Diagnostics"
 msgstr ""
 
+msgid "Data & Updates"
+msgstr ""
+
 msgid "DNS Hijack"
 msgstr ""
 
