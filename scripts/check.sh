@@ -334,6 +334,23 @@ if (/^PKG_SOURCE_URL:=/m.test(mk.replace(guard[0], '')))
 	throw new Error('PKG_SOURCE_URL must not be declared outside the OXIDNS_PKG_HASH guard');
 NODE
 
+# [poll] LuCI poll.start() runs step() immediately on add(). A refresh callback
+# that unregisters itself while detach-checking kills the loop before the view
+# is ever inserted; registration must also wait for the post-mount setTimeout.
+node <<'NODE'
+const fs = require('fs');
+for (const name of ['logs', 'hijack', 'overview']) {
+	const p = `htdocs/luci-static/resources/view/oxidns/${name}.js`;
+	const t = fs.readFileSync(p, 'utf8');
+	if (/if \(!isAttached\(viewRoot\)\) \{\s*\n\s*unregisterPoll\(\);/.test(t))
+		throw new Error(`${name}.js: refresh must not unregisterPoll() while detached`);
+	const addIdx = t.search(/^\s*poll\.add\(/m);
+	const timeoutIdx = t.lastIndexOf('window.setTimeout(function()', addIdx);
+	if (addIdx < 0 || timeoutIdx < 0 || !t.slice(timeoutIdx, addIdx).includes('isAttached(viewRoot)'))
+		throw new Error(`${name}.js: poll.add() must be inside the post-mount setTimeout`);
+}
+NODE
+
 # [build-rules] Negative fixtures for the validators. These must fail on
 # malformed input; a validator that accepts everything is worse than none.
 (
