@@ -70,7 +70,9 @@ Three things make prewarming effective:
 
 - `config.yaml` contains a `cache` plugin on the chain used by the target listener;
 - the IP, port and protocol in the page match the listener's `listen` value;
-- the router has `dig`, or an `nslookup` that supports `-port`.
+- the router has `dig` (provided by `bind-dig`, installed automatically as a package dependency).
+
+Prewarming always uses `dig` with an explicit `@IP -p PORT`. BusyBox `nslookup` is not used: its custom-port syntax differs across builds (`-port`, `-p`, or unsupported), which could send queries to port 53 and warm nothing.
 
 `Server IP` accepts `127.0.0.1` or `192.168.1.1`; port and protocol are free-form. `Run now` ignores the enable switch and always runs one pass. An interval of `0` runs once at service start.
 

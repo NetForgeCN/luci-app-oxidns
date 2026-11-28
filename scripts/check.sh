@@ -183,6 +183,21 @@ if grep -q 'xargs .*-P' root/usr/libexec/oxidns-prewarm; then
 	exit 1
 fi
 grep -q 'wait' root/usr/libexec/oxidns-prewarm
+# Prewarming issues queries with `dig` only. BusyBox nslookup's custom-port
+# flag differs across builds (-port/-p/unsupported) and once sent queries to
+# port 53, so it must not come back. bind-dig must be a hard package dependency
+# for a standalone install to have the required binary.
+grep -q 'dig +time=' root/usr/libexec/oxidns-prewarm
+if grep -q 'nslookup' root/usr/libexec/oxidns-prewarm; then
+	echo "prewarmer must use dig (bind-dig), not nslookup" >&2
+	exit 1
+fi
+grep -q '+bind-dig' Makefile
+if grep -q 'nslookup' root/usr/libexec/rpcd/luci.oxidns; then
+	echo "rpcd prewarm_run must not accept nslookup as a query tool" >&2
+	exit 1
+fi
+grep -q 'require_commands mktemp awk sort wc find logger dig' root/usr/libexec/rpcd/luci.oxidns
 sh -n scripts/build-luci-package.sh
 sh -n scripts/integration-check.sh
 sh -n scripts/service-check.sh
