@@ -95,6 +95,15 @@ GEO_LOCK_DIR="$CORE_PROGRESS_DIR/geo-operation.lock"
 GEO_LOG_LOCK_DIR="$CORE_PROGRESS_DIR/geo-log.lock"
 ALLOW_CORE_UPLOAD_DEFAULT=0		# S2: uploaded cores are opt-in (UCI allow_core_upload)
 
+# T1: runtime trust root. A firmware ships a read-only pin manifest built from
+# the same fixed hashes used at build time (see pins/runtime-pins.json in the
+# downstream firmware kit). When present, core/rules updates resolve the fixed
+# tag and require the asset hash to match the pin; GitHub's own asset digest is
+# no longer the sole trust root. When absent, updates fail closed unless the
+# operator explicitly opts in to unpinned latest via UCI.
+RUNTIME_PINS_FILE="${OXIDNS_RUNTIME_PINS_FILE:-/usr/share/oxidns/runtime-pins.json}"
+ALLOW_UNPINNED_RELEASE_DEFAULT=0	# T1: latest/per_page=100 needs explicit opt-in
+
 # C3: fail with a structured JSON error instead of an empty ubus reply when a
 # required command is missing.
 require_commands() {
@@ -527,6 +536,12 @@ load_settings() {
 	case "$ALLOW_CORE_UPLOAD" in
 		1|true|yes|on) ALLOW_CORE_UPLOAD=1 ;;
 		*) ALLOW_CORE_UPLOAD=0 ;;
+	esac
+	# T1: explicit opt-in for unpinned "latest" core/rules updates. Default off.
+	ALLOW_UNPINNED_RELEASE="$(uci_get allow_unpinned_release "$ALLOW_UNPINNED_RELEASE_DEFAULT")"
+	case "$ALLOW_UNPINNED_RELEASE" in
+		1|true|yes|on) ALLOW_UNPINNED_RELEASE=1 ;;
+		*) ALLOW_UNPINNED_RELEASE=0 ;;
 	esac
 	# Geo data: empty means use DEFAULT_GEOIP_URL / DEFAULT_GEOSITE_URL.
 	GEOIP_URL="$(uci_get geoip_url '')"
@@ -2022,6 +2037,48 @@ valid_sha256() {
 	printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'
 }
 
+# T1: read a scalar field from the read-only runtime pin manifest.
+# Usage: runtime_pin_get <jsonfilter-expression> ; prints the value on stdout,
+# returns 1 when the manifest or jsonfilter is unavailable or the field is empty.
+# The manifest is supplier-controlled, read-only firmware content -- never
+# accepted from upload or UCI.
+runtime_pin_get() {
+	[ -r "$RUNTIME_PINS_FILE" ] || return 1
+	command -v jsonfilter >/dev/null 2>&1 || return 1
+	PIN_VALUE="$(jsonfilter -i "$RUNTIME_PINS_FILE" -e "$1" 2>/dev/null || true)"
+	[ -n "$PIN_VALUE" ] || return 1
+	PIN_VALUE="$(printf '%s' "$PIN_VALUE" | tr -d '"' | tr -d '\n')"
+	[ -n "$PIN_VALUE" ] || return 1
+	printf '%s' "$PIN_VALUE"
+}
+
+# T1: resolve the update policy for a release channel (core/rules).
+# Sets (global, for the caller): RUNTIME_PIN_TAG, RUNTIME_PIN_SHA256.
+# Returns 0 when pinned, 1 when the operator opted in to unpinned latest,
+# 2 when neither a valid pin nor an explicit opt-in exists (fail closed).
+runtime_pin_policy() {
+	CHANNEL="$1"
+	RUNTIME_PIN_TAG=""
+	RUNTIME_PIN_SHA256=""
+	if [ "$ALLOW_UNPINNED_RELEASE" != "1" ]; then
+		RUNTIME_PIN_TAG="$(runtime_pin_get "@.${CHANNEL}.tag" || true)"
+		RUNTIME_PIN_SHA256="$(runtime_pin_get "@.${CHANNEL}.sha256" || true)"
+		valid_sha256 "$RUNTIME_PIN_SHA256" || RUNTIME_PIN_SHA256=""
+		if [ -n "$RUNTIME_PIN_TAG" ] && [ -n "$RUNTIME_PIN_SHA256" ]; then
+			return 0
+		fi
+		return 2
+	fi
+	# Explicit opt-in: pins, when present, still win and are still enforced.
+	RUNTIME_PIN_TAG="$(runtime_pin_get "@.${CHANNEL}.tag" || true)"
+	RUNTIME_PIN_SHA256="$(runtime_pin_get "@.${CHANNEL}.sha256" || true)"
+	valid_sha256 "$RUNTIME_PIN_SHA256" || RUNTIME_PIN_SHA256=""
+	if [ -n "$RUNTIME_PIN_TAG" ] && [ -n "$RUNTIME_PIN_SHA256" ]; then
+		return 0
+	fi
+	return 1
+}
+
 # R8: never pipe tar into awk without checking tar's exit status. Both listings
 # are written to temp files first and their return codes are verified.
 validate_safe_archive() {
@@ -2107,7 +2164,11 @@ default_api_listen() {
 		LAN_IP="$(lan_ipv4_from_interface br-lan 2>/dev/null || true)"
 	fi
 	if ! valid_ipv4 "$LAN_IP"; then
-		LAN_IP="0.0.0.0"
+		# S3: never fall back to a wildcard bind. A failed LAN probe must
+		# not silently expose the authenticated API (and webui) on every
+		# interface, including WAN.
+		LAN_IP="127.0.0.1"
+		syslog_service_event "LAN address probe failed; API default listen fell back to loopback"
 	fi
 	printf '%s:9199' "$LAN_IP"
 }
@@ -2389,6 +2450,26 @@ install_core_from_release() {
 	RELEASE_FILE="$CORE_TMP_DIR/release.json"
 	ARCHIVE_FILE="$CORE_TMP_DIR/$ASSET_NAME"
 	UNPACK_DIR="$CORE_TMP_DIR/unpack"
+
+	# T1: pinned updates resolve the supplier-fixed tag; no pin + no opt-in
+	# fails closed, so the GitHub "latest" pointer is not the sole trust root.
+	# "reinstall" intentionally keeps the current version tag and is allowed
+	# under the same policy (its hash is still checked against the pin).
+	POLICY_RC=0
+	runtime_pin_policy core || POLICY_RC=$?
+	if [ "$POLICY_RC" -eq 2 ]; then
+		core_install_error "release_pin_required" "core updates require a firmware runtime pin or allow_unpinned_release=1" "verify_runtime_pin" "asset=$ASSET_NAME pins=$RUNTIME_PINS_FILE"
+		return 1
+	fi
+	if [ "$POLICY_RC" -eq 0 ]; then
+		RELEASE_TARGET="$(version_tag "$RUNTIME_PIN_TAG")"
+		core_progress_log "info" "pinned core release: $RELEASE_TARGET"
+		syslog_service_event "core release pinned to $RELEASE_TARGET (asset=$ASSET_NAME)"
+	else
+		core_progress_log "warn" "unpinned core update: trust root is GitHub releases/latest"
+		syslog_service_event "WARNING unpinned core update via releases/latest (asset=$ASSET_NAME)"
+	fi
+
 	RELEASE_URL="$(release_api_url "$CORE_REPOSITORY" "$RELEASE_TARGET")"
 
 	core_progress_log "info" "fetch release metadata: $RELEASE_URL"
@@ -2413,6 +2494,14 @@ install_core_from_release() {
 	core_progress_log "success" "selected release=$SELECT_TAG asset=$SELECT_ASSET_NAME size=${SELECT_SIZE:-unknown}"
 	if ! valid_sha256 "$SELECT_SHA256"; then
 		core_install_error "release_digest_missing" "selected OxiDNS release asset does not include a valid SHA256 digest" "verify_release_digest" "asset=$SELECT_ASSET_NAME digest=${SELECT_SHA256:-missing}"
+		return 1
+	fi
+	# T1: the firmware pin is authoritative. A pinned tag whose asset digest
+	# drifted (e.g. a rewritten release) is rejected before any bytes are
+	# downloaded from the mutable API response.
+	if [ "$POLICY_RC" -eq 0 ] && [ "$SELECT_SHA256" != "$RUNTIME_PIN_SHA256" ]; then
+		core_install_error "release_pin_mismatch" "core asset digest does not match the firmware runtime pin" "verify_runtime_pin" "asset=$SELECT_ASSET_NAME release=$SELECT_SHA256 pin=$RUNTIME_PIN_SHA256"
+		syslog_service_event "BLOCKED core asset digest/pin mismatch: $SELECT_ASSET_NAME"
 		return 1
 	fi
 	core_progress_log "info" "download archive: $SELECT_URL"
@@ -2758,6 +2847,32 @@ validate_uploaded_binary() {
 	return 0
 }
 
+# T2: an uploaded core is executed as root. When the firmware ships a runtime
+# pin with core.binary_sha256, the unpacked ELF must match it byte-for-byte.
+# A plain SHA256 of an arbitrary upload is not a signature, but it does bind
+# execution to the firmware's fixed, supplier-controlled trust root instead of
+# trusting whatever the operator happened to upload. No pin => fail closed for
+# upload (the opt-in allow_core_upload alone is not sufficient).
+validate_uploaded_core_pin() {
+	BIN="$1"
+	UPLOAD_BIN_SHA="$(sha256_file "$BIN" 2>/dev/null || true)"
+	if ! valid_sha256 "$UPLOAD_BIN_SHA"; then
+		syslog_service_event "BLOCKED core upload: cannot compute binary sha256"
+		return 1
+	fi
+	PIN_BIN_SHA="$(runtime_pin_get '@.core.binary_sha256' || true)"
+	if ! valid_sha256 "$PIN_BIN_SHA"; then
+		syslog_service_event "BLOCKED core upload: no firmware core.binary_sha256 pin (sha=$UPLOAD_BIN_SHA)"
+		return 1
+	fi
+	if [ "$UPLOAD_BIN_SHA" != "$PIN_BIN_SHA" ]; then
+		syslog_service_event "BLOCKED core upload: binary sha256 $UPLOAD_BIN_SHA != pin $PIN_BIN_SHA"
+		return 1
+	fi
+	syslog_service_event "core upload accepted: binary sha256 $UPLOAD_BIN_SHA matches firmware pin"
+	return 0
+}
+
 # Optional plain-text metadata inside an uploaded archive. Absent/invalid
 # metadata is reported as "unknown" instead of executing the binary.
 uploaded_metadata_value() {
@@ -2797,6 +2912,14 @@ install_uploaded_core_from_unpack() {
 		return 1
 	fi
 	core_progress_log "success" "uploaded binary passed static ELF validation (not executed)"
+
+	# T2: root executes this binary after install. Require it to match the
+	# firmware's supplier-controlled pin before any files are replaced.
+	if ! validate_uploaded_core_pin "$UNPACK_DIR/oxidns"; then
+		upload_core_error "upload_pin_mismatch" "uploaded core does not match the firmware runtime pin; install aborted" "verify_runtime_pin" "pins=$RUNTIME_PINS_FILE"
+		return 1
+	fi
+	core_progress_log "success" "uploaded core binary matches firmware runtime pin"
 
 	CONFIG_TMP=""
 	if [ ! -e "$CONFIG_PATH" ] && [ -f "$UNPACK_DIR/config.yaml" ]; then
@@ -3253,23 +3376,41 @@ rules_resolve_release() {
 	RULES_SHA256=""
 	RULES_SIZE=""
 
-	RELEASES_FILE="$WORK_DIR/releases.json"
-	if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases?per_page=100" "$RELEASES_FILE"; then
-		RULES_RESOLVE_ERROR="cannot list releases: ${DOWNLOAD_ERROR:-unknown}"
+	# T1: pin first. A firmware-supplied rules tag skips the mutable
+	# releases?per_page=100 listing entirely, so a pushed/retagged release
+	# cannot change the trust root. Without a pin, require explicit opt-in.
+	RULES_POLICY_RC=0
+	runtime_pin_policy rules || RULES_POLICY_RC=$?
+	if [ "$RULES_POLICY_RC" -eq 2 ]; then
+		RULES_RESOLVE_ERROR="rules updates require a firmware runtime pin or allow_unpinned_release=1"
 		core_progress_log "error" "$RULES_RESOLVE_ERROR"
 		return 1
 	fi
-	TAG_RC=0
-	rules_latest_tag "$RELEASES_FILE" || TAG_RC=$?
-	if [ "$TAG_RC" -ne 0 ]; then
-		return 1
-	fi
-	if [ -z "$RULES_TAG" ]; then
-		core_progress_log "warn" "no $RULES_TAG_PREFIX* release in $RULES_REPOSITORY (tags: ${RULES_TAG_LIST:-none})"
-		return 2
+	if [ "$RULES_POLICY_RC" -eq 0 ]; then
+		RULES_TAG="$RUNTIME_PIN_TAG"
+		core_progress_log "info" "pinned rules release: $RULES_TAG"
+		syslog_service_event "rules release pinned to $RULES_TAG"
+	else
+		core_progress_log "warn" "unpinned rules update: trust root is releases?per_page=100"
+		syslog_service_event "WARNING unpinned rules update via releases listing"
+		RELEASES_FILE="$WORK_DIR/releases.json"
+		if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases?per_page=100" "$RELEASES_FILE"; then
+			RULES_RESOLVE_ERROR="cannot list releases: ${DOWNLOAD_ERROR:-unknown}"
+			core_progress_log "error" "$RULES_RESOLVE_ERROR"
+			return 1
+		fi
+		TAG_RC=0
+		rules_latest_tag "$RELEASES_FILE" || TAG_RC=$?
+		if [ "$TAG_RC" -ne 0 ]; then
+			return 1
+		fi
+		if [ -z "$RULES_TAG" ]; then
+			core_progress_log "warn" "no $RULES_TAG_PREFIX* release in $RULES_REPOSITORY (tags: ${RULES_TAG_LIST:-none})"
+			return 2
+		fi
 	fi
 	RULES_VERSION="${RULES_TAG#"$RULES_TAG_PREFIX"}"
-	core_progress_log "info" "latest rules release: $RULES_TAG"
+	core_progress_log "info" "resolved rules release: $RULES_TAG"
 
 	RELEASE_FILE="$WORK_DIR/release.json"
 	if ! download_file "$GITHUB_API_BASE/repos/$RULES_REPOSITORY/releases/tags/$RULES_TAG" "$RELEASE_FILE"; then
@@ -3288,6 +3429,14 @@ rules_resolve_release() {
 	RULES_URL="$SELECT_URL"
 	RULES_SHA256="$SELECT_SHA256"
 	RULES_SIZE="$SELECT_SIZE"
+	# T1: firmware pin is authoritative for rules too. Applies to both the
+	# check and the update path because both call this resolver.
+	if [ "$RULES_POLICY_RC" -eq 0 ] && [ "$RULES_SHA256" != "$RUNTIME_PIN_SHA256" ]; then
+		RULES_RESOLVE_ERROR="rules asset digest does not match the firmware runtime pin"
+		core_progress_log "error" "$RULES_RESOLVE_ERROR"
+		syslog_service_event "BLOCKED rules asset digest/pin mismatch: $RULES_ASSET"
+		return 1
+	fi
 	return 0
 }
 
