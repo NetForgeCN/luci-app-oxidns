@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "description": "Firmware-supplied runtime trust root for OxiDNS core/rules updates and uploads. Shipped read-only under /usr/share/oxidns. Regenerate alongside oxidns-core/Makefile and oxidns-rules-baseline/Makefile version/hash bumps. See README for the update procedure.",
+  "core": {
+    "tag": "v1.7.1",
+    "sha256": "6c82984e477d70d0c9259a6c7997496e248c78a384b2b7585908bba7f4af854c",
+    "binary_sha256": "701939fc51d9d1c06bc90d8e660807f2248f039fabc243ff109d93b281f0fafb"
+  },
+  "rules": {
+    "tag": "rules-v2026.11.24.0419",
+    "sha256": "1084a9aa8a7986c6159fbeba78433ff64c26567bfe0f782822fc3898023b2a6a"
+  }
+}

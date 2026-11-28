@@ -40,7 +40,27 @@
 
 子标签采用懒渲染：只有首次切到该标签时才构建界面，避免编辑器在隐藏面板里量到零宽度；切走的标签会停止轮询，再次进入时恢复。
 
-> 安全提示：上传内核默认关闭。需要在 `Configuration -> Settings` 勾选“允许手动上传内核”，并且登录用户具备 `luci-app-oxidns-core-upload` ACL 组权限（默认 root 账号具备）；上传的二进制不会在校验阶段执行，仅作为服务内核运行。`Data & Updates -> Geo 数据` 可填写可选 SHA-256 校验值，下载内容校验失败会保留现有数据。
+> 安全提示：上传内核默认关闭。需要在 `Configuration -> Settings` 勾选“允许手动上传内核”，并且登录用户具备 `luci-app-oxidns-core-upload` ACL 组权限（默认 root 账号具备）；上传的二进制不会在校验阶段执行，仅作为服务内核运行。上传安装的二进制必须与固件内置的 `/usr/share/oxidns/runtime-pins.json` 中 `core.binary_sha256` 逐字节一致，否则拒绝安装并写 syslog；没有 pin 文件时同样拒绝。`Data & Updates -> Geo 数据` 可填写可选 SHA-256 校验值，下载内容校验失败会保留现有数据。
+
+### 运行时信任根（runtime-pins.json）
+
+固件的 `/usr/share/oxidns/runtime-pins.json` 是内核与规则更新的**只读信任根**，由打包方随固件分发，不来自网络或 UCI：
+
+| 字段 | 用途 |
+|---|---|
+| `core.tag` / `core.sha256` | 内核更新固定到该 release tag，并要求发布资产 digest 与 pin 一致；不匹配则拒绝 |
+| `core.binary_sha256` | 上传内核安装前校验解包后 ELF 的 SHA-256；不匹配或无 pin 则拒绝（上传=root 执行） |
+| `rules.tag` / `rules.sha256` | 规则更新固定到该 tag，跳过 `releases?per_page=100` 列表；资产 digest 不符则拒绝 |
+
+**默认 fail-closed**：没有有效 pin 时，`Core -> Check Update`、规则更新和内核上传都会拒绝，除非显式设置 `UCI oxidns.main.allow_unpinned_release=1` 选择信任可变的 `releases/latest`。显式 opt-in 时若 pin 存在仍然强制校验。所有 pin 命中、失配与 opt-in 都写入 syslog（`luci-app-oxidns` tag）。
+
+**更新 pin 的流程**（升级内核或规则基线时必须同步更新）：
+1. 从 `svenshi/oxidns` 对应 tag 下载 `oxidns-<target>.tar.gz`，`sha256sum` 得到 archive hash → `core.sha256`；
+2. 解包后对 `oxidns` 二进制 `sha256sum` → `core.binary_sha256`；
+3. 从 `NetForgeCN/luci-app-oxidns` 的 `rules-v<version>` release 取资产 digest → `rules.sha256`，tag 写 `rules-v<version>`；
+4. 与 `oxidns-core/Makefile`、`oxidns-rules-baseline/Makefile` 的版本/hash 保持一致后重新打包。
+
+> API 监听自动探测失败时回退到 `127.0.0.1:9199`，不再回退 `0.0.0.0`，避免把带认证的 API/WebUI 暴露到包括 WAN 在内的所有接口。若需非回环监听，请显式设置 `api.http.listen` 并配置 TLS 与防火墙。
 
 ## 快速开始
 
