@@ -114,7 +114,9 @@ make menuconfig
 make package/luci-app-oxidns/compile V=s
 ```
 
-`oxidns-core` and `oxidns-rules-baseline` are hard dependencies and are selected with the app. Artifacts appear in `bin/packages/<arch>/`.
+Hard dependencies selected with the app: `oxidns-core`, `oxidns-rules-baseline`, `bind-dig` (provides `dig` for prewarming), plus the LuCI/rpcd base `luci-base`, `rpcd`, `jsonfilter`, `uclient-fetch` and `ca-bundle`. Artifacts appear in `bin/packages/<arch>/`.
+
+On OpenWrt 25.12 and newer, LuCI requires every JS module factory to return a `baseclass.extend()` / `view.extend()` class constructor; `tabs.js` has been updated accordingly. The app does **not** require `openssl` or `base64`: random credentials fall back through `openssl rand -base64` → `base64` → BusyBox `od`/`tr`/`cut`, so a minimal busybox-only image still generates a valid 32-character password.
 
 Supported targets: x86_64, aarch64, i386 and ARM hard-float (cortex maps to armv7, others to armv6). Soft-float ARM cannot use the published hard-float (eabihf) core. Architectures without a published musl core (for example MIPS) cannot bake in a core through buildroot because `oxidns-core` is a hard dependency; use the quick-packaging path below without an embedded core and upload a suitable core from the `Core` page.
 
