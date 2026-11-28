@@ -198,6 +198,10 @@ load_settings() {
 	WORKING_DIR="$SERVICE_TEST_DIR/work"
 	# Keep the persistence mode off: fixtures must never write to /etc/oxidns.
 	PERSIST_CORE=0
+	# Release-path tests use a synthetic fixture instead of a real pinned
+	# asset; opt in to unpinned here. The pin policy itself is covered by
+	# check.sh and the integration checks.
+	ALLOW_UNPINNED_RELEASE=1
 }
 validate_config_file() { printf 'configuration is valid\n'; }
 core_progress_command() { :; }
