@@ -2058,6 +2058,8 @@ runtime_pin_get() {
 # 2 when neither a valid pin nor an explicit opt-in exists (fail closed).
 runtime_pin_policy() {
 	CHANNEL="$1"
+	# Default-off even when a caller has not run load_settings (set -u safety).
+	ALLOW_UNPINNED_RELEASE="${ALLOW_UNPINNED_RELEASE:-0}"
 	RUNTIME_PIN_TAG=""
 	RUNTIME_PIN_SHA256=""
 	if [ "$ALLOW_UNPINNED_RELEASE" != "1" ]; then

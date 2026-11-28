@@ -220,6 +220,10 @@ WEBUI_DIR="$SERVICE_TEST_DIR/webui"
 		cp "$OXIDNS_BIN" "$CORE_TMP_DIR/unpack/oxidns"
 		printf '# replacement\n' >> "$CORE_TMP_DIR/unpack/oxidns"
 		validate_uploaded_binary() { return 0; }
+		# The runtime-pin check is a supply-chain concern exercised by
+		# integration-check.sh. This test targets service-restart timing with
+		# a synthetic binary, so stub it the same way as the ELF check.
+		validate_uploaded_core_pin() { return 0; }
 		install_uploaded_core_from_unpack binary "$CORE_TMP_DIR/unpack"
 		;;
 	release)

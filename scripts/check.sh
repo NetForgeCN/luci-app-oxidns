@@ -3,7 +3,7 @@
 set -eu
 
 node -e "const fs=require('fs'),d='htdocs/luci-static/resources/view/oxidns'; for (const f of fs.readdirSync(d).filter(x=>x.endsWith('.js')).map(x=>d+'/'+x).concat(fs.readdirSync(d+'/parts').filter(x=>x.endsWith('.js')).map(x=>d+'/parts/'+x))) new Function(fs.readFileSync(f,'utf8'));"
-node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
+node -e "for (const f of ['root/usr/share/luci/menu.d/luci-app-oxidns.json','root/usr/share/rpcd/acl.d/luci-app-oxidns.json','root/usr/share/oxidns/targets.json','root/usr/share/oxidns/runtime-pins.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
 node <<'NODE'
 const fs = require('fs');
 
@@ -624,3 +624,34 @@ grep -q 'rollback' root/usr/libexec/rpcd/luci.oxidns || {
 	echo "write paths need a rollback path on failure" >&2
 	exit 1
 }
+
+# [runtime trust root] pin manifest must be well-formed and self-consistent
+# with the build-time hashes; rpcd must fail closed when no pin is present.
+node <<'NODE'
+const fs = require('fs');
+const pins = JSON.parse(fs.readFileSync('root/usr/share/oxidns/runtime-pins.json', 'utf8'));
+const sha = /^[0-9a-f]{64}$/;
+for (const key of ['core', 'rules']) {
+  if (!pins[key] || !/^(?:rules-v)?v?[0-9][0-9A-Za-z.\-_]*$/.test(String(pins[key].tag)))
+    throw new Error(`${key}.tag missing or invalid`);
+  if (!sha.test(pins[key].sha256))
+    throw new Error(`${key}.sha256 must be 64 lowercase hex`);
+}
+if (!sha.test(pins.core.binary_sha256))
+  throw new Error('core.binary_sha256 must be 64 lowercase hex');
+const coreMk = fs.readFileSync('oxidns-core/Makefile', 'utf8');
+for (const [, hash] of coreMk.matchAll(/PKG_HASH:=([0-9a-f]{64})/g)) {
+  if (hash !== pins.core.sha256) continue;
+  process.exit(0);
+}
+throw new Error('core.sha256 must match a PKG_HASH pinned in oxidns-core/Makefile');
+NODE
+if ! grep -q 'release_pin_required' root/usr/libexec/rpcd/luci.oxidns; then
+	echo "runtime updates must fail closed when no pin is available" >&2
+	exit 1
+fi
+if ! awk '/^default_api_listen\(\) \{/{f=1} f{print} f&&/^}/{exit}' \
+	root/usr/libexec/rpcd/luci.oxidns | grep -q '127.0.0.1'; then
+	echo "API listen fallback must be loopback, not 0.0.0.0" >&2
+	exit 1
+fi
